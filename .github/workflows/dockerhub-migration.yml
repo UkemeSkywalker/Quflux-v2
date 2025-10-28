@@ -1,0 +1,52 @@
+name: Migrate BitnamiLegacy Images to HelmHubIO
+
+on:
+  workflow_dispatch:  # run manually from GitHub Actions tab
+
+jobs:
+  migrate:
+    name: Migrate Docker Images
+    runs-on: ubuntu-latest
+
+    steps:
+      # --------------------------------------------------------------
+      # 🧰 Step 1: Checkout your repository (where the script is stored)
+      # --------------------------------------------------------------
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # --------------------------------------------------------------
+      # 🧩 Step 2: Install dependencies
+      # --------------------------------------------------------------
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y jq curl
+
+      # --------------------------------------------------------------
+      # 🔑 Step 3: Log in to Docker Hub
+      # --------------------------------------------------------------
+      - name: Docker Login
+        env:
+          DOCKER_USER: ${{ secrets.DOCKER_USER }}
+          DOCKER_PASS: ${{ secrets.DOCKER_PASS }}
+        run: |
+          echo "🔐 Logging into Docker Hub..."
+          echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin
+
+      # --------------------------------------------------------------
+      # 🚀 Step 4: Run migration script
+      # --------------------------------------------------------------
+      - name: Run DockerHub migration
+        env:
+          DOCKER_USER: ${{ secrets.DOCKER_USER }}
+          DOCKER_PASS: ${{ secrets.DOCKER_PASS }}
+        run: |
+          chmod +x ./migrate-dockerhub.sh
+          ./migrate-dockerhub.sh
+
+      # --------------------------------------------------------------
+      # ✅ Step 5: Summary
+      # --------------------------------------------------------------
+      - name: Complete
+        run: echo "🎉 Migration completed successfully!"
