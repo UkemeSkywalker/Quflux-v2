@@ -82,7 +82,7 @@ for REPO in "${REPOS[@]}"; do
       | map(select(.name | startswith("sha256-") | not)) 
       | sort_by(.last_updated) 
       | reverse 
-      | .[0].name')
+      | .[0].name' 2>/dev/null || echo "")
 
   if [ "$LATEST_TAG" = "null" ] || [ -z "$LATEST_TAG" ]; then
     echo "⚠️  No valid (non-sha) tags found for ${REPO}, skipping."
