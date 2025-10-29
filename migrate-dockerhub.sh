@@ -7,9 +7,6 @@ DEST_USER="helmhubio"
 
 # -------------------------------------------------------------------
 # 🔐 Docker login credentials (set these before running)
-# Example:
-#   export DOCKER_USER="helmhubio"
-#   export DOCKER_PASS="your-access-token"
 # -------------------------------------------------------------------
 
 DOCKER_USER="${DOCKER_USER:-}"
@@ -35,6 +32,26 @@ for cmd in curl jq docker; do
 done
 
 # -------------------------------------------------------------------
+# 🔁 [NEW] Retry Helper Function
+# -------------------------------------------------------------------
+retry() {
+  local cmd=$1
+  local max_retries=${2:-3}
+  local delay=${3:-5}
+  local count=0
+
+  until eval "$cmd"; do
+    count=$((count + 1))
+    if [ $count -ge $max_retries ]; then
+      echo "❌ Command failed after ${max_retries} attempts: $cmd"
+      return 1
+    fi
+    echo "⚠️  Retry ${count}/${max_retries} for: $cmd (waiting ${delay}s)"
+    sleep "$delay"
+  done
+}
+
+# -------------------------------------------------------------------
 # 🔑 Login to Docker Hub
 # -------------------------------------------------------------------
 echo "🔐 Logging into Docker Hub as ${DOCKER_USER}..."
@@ -53,7 +70,7 @@ URL="https://hub.docker.com/v2/repositories/${SRC_USER}/?page_size=100"
 
 while [ -n "$URL" ] && [ "$URL" != "null" ]; do
   echo "📥 Fetching from: $URL"
-  RESP=$(curl -s "$URL")
+  RESP=$(retry "curl -s \"$URL\"" 3 5)
   NAMES=$(echo "$RESP" | jq -r '.results[].name')
   REPOS+=($NAMES)
   URL=$(echo "$RESP" | jq -r '.next')
@@ -74,7 +91,9 @@ for REPO in "${REPOS[@]}"; do
   echo "🚀 Processing repository: ${REPO}"
 
   TAGS_URL="https://hub.docker.com/v2/repositories/${SRC_USER}/${REPO}/tags?page_size=100"
-  TAGS_JSON=$(curl -s "$TAGS_URL")
+  
+  # [NEW] Retry fetching tags
+  TAGS_JSON=$(retry "curl -s \"$TAGS_URL\"" 3 5)
 
   # 🧠 Filter out sha256-* tags and sort by last_updated (newest first)
   LATEST_TAG=$(echo "$TAGS_JSON" \
@@ -106,10 +125,11 @@ for REPO in "${REPOS[@]}"; do
   echo "📦 Using most recent real tag: ${LATEST_TAG}"
 
   # -------------------------------------------------------------------
-  # 📥 Pull, tag, and push
+  # 📥 Pull, tag, and push (with retries)
   # -------------------------------------------------------------------
+
   echo "📥 Pulling ${SRC_IMAGE}..."
-  if ! docker pull "$SRC_IMAGE"; then
+  if ! retry "docker pull \"$SRC_IMAGE\"" 3 10; then
     echo "❌ Failed to pull ${SRC_IMAGE}, skipping."
     continue
   fi
@@ -121,7 +141,7 @@ for REPO in "${REPOS[@]}"; do
   fi
 
   echo "☁️  Pushing ${DEST_IMAGE}..."
-  if ! docker push "$DEST_IMAGE"; then
+  if ! retry "docker push \"$DEST_IMAGE\"" 3 10; then
     echo "❌ Failed to push ${DEST_IMAGE}, skipping."
     continue
   fi
