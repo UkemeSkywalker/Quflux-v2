@@ -32,7 +32,7 @@ for cmd in curl jq docker; do
 done
 
 # -------------------------------------------------------------------
-# 🔁 [NEW] Retry Helper Function
+# 🔁 Retry Helper Function
 # -------------------------------------------------------------------
 retry() {
   local cmd=$1
@@ -52,7 +52,7 @@ retry() {
 }
 
 # -------------------------------------------------------------------
-# 🔑 Login to Docker Hub
+# 🔑 Login to Docker Hub (for push/pull)
 # -------------------------------------------------------------------
 echo "🔐 Logging into Docker Hub as ${DOCKER_USER}..."
 echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin >/dev/null 2>&1 || {
@@ -60,6 +60,23 @@ echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin >/dev/null
   exit 1
 }
 echo "✅ Docker login successful!"
+
+# -------------------------------------------------------------------
+# 🔐 Authenticate Docker Hub API (for fetching repo/tag metadata)
+# -------------------------------------------------------------------
+echo "🔑 Authenticating to Docker Hub API..."
+DOCKER_JWT=$(curl -s -u "$DOCKER_USER:$DOCKER_PASS" "https://hub.docker.com/v2/users/login/" | jq -r '.token')
+if [ -z "$DOCKER_JWT" ] || [ "$DOCKER_JWT" == "null" ]; then
+  echo "❌ Failed to obtain Docker Hub API token."
+  exit 1
+fi
+echo "✅ Docker Hub API authentication successful."
+
+# Helper: Authenticated curl
+api_curl() {
+  local url=$1
+  curl -s -H "Authorization: JWT $DOCKER_JWT" "$url"
+}
 
 # -------------------------------------------------------------------
 # 📦 Fetch all repositories from the source user
@@ -70,7 +87,7 @@ URL="https://hub.docker.com/v2/repositories/${SRC_USER}/?page_size=100"
 
 while [ -n "$URL" ] && [ "$URL" != "null" ]; do
   echo "📥 Fetching from: $URL"
-  RESP=$(retry "curl -s \"$URL\"" 3 5)
+  RESP=$(retry "api_curl \"$URL\"" 3 5)
   NAMES=$(echo "$RESP" | jq -r '.results[].name')
   REPOS+=($NAMES)
   URL=$(echo "$RESP" | jq -r '.next')
@@ -91,11 +108,8 @@ for REPO in "${REPOS[@]}"; do
   echo "🚀 Processing repository: ${REPO}"
 
   TAGS_URL="https://hub.docker.com/v2/repositories/${SRC_USER}/${REPO}/tags?page_size=100"
-  
-  # [NEW] Retry fetching tags
-  TAGS_JSON=$(retry "curl -s \"$TAGS_URL\"" 3 5)
+  TAGS_JSON=$(retry "api_curl \"$TAGS_URL\"" 3 5)
 
-  # 🧠 Filter out sha256-* tags and sort by last_updated (newest first)
   LATEST_TAG=$(echo "$TAGS_JSON" \
     | jq -r '.results 
       | map(select(.name | startswith("sha256-") | not)) 
@@ -111,11 +125,9 @@ for REPO in "${REPOS[@]}"; do
   SRC_IMAGE="${SRC_USER}/${REPO}:${LATEST_TAG}"
   DEST_IMAGE="${DEST_USER}/${REPO}:${LATEST_TAG}"
 
-  # -------------------------------------------------------------------
-  # 🔍 Check if image already exists in DEST_USER registry
-  # -------------------------------------------------------------------
+  # 🔍 Check if image already exists
   CHECK_URL="https://hub.docker.com/v2/repositories/${DEST_USER}/${REPO}/tags/${LATEST_TAG}/"
-  EXISTS=$(curl -s -o /dev/null -w "%{http_code}" "$CHECK_URL")
+  EXISTS=$(curl -s -o /dev/null -w "%{http_code}" -H "Authorization: JWT $DOCKER_JWT" "$CHECK_URL")
 
   if [ "$EXISTS" -eq 200 ]; then
     echo "⏭️  ${DEST_IMAGE} already exists — skipping migration."
@@ -123,10 +135,6 @@ for REPO in "${REPOS[@]}"; do
   fi
 
   echo "📦 Using most recent real tag: ${LATEST_TAG}"
-
-  # -------------------------------------------------------------------
-  # 📥 Pull, tag, and push (with retries)
-  # -------------------------------------------------------------------
 
   echo "📥 Pulling ${SRC_IMAGE}..."
   if ! retry "docker pull \"$SRC_IMAGE\"" 3 10; then
