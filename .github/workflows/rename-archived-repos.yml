@@ -1,0 +1,20 @@
+name: Rename Archived Docker Repos
+
+on:
+  workflow_dispatch:
+
+jobs:
+  rename-repos:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Run rename script
+      env:
+        DOCKER_USER: ${{ secrets.DOCKER_USER }}
+        DOCKER_PASS: ${{ secrets.DOCKER_PASS }}
+      run: |
+        chmod +x ./rename-archived-repos.sh
+        ./rename-archived-repos.sh
